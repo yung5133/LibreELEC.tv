@@ -373,6 +373,10 @@ devices = \
         'config': 'evb-rk3399_defconfig',
         'rockchip_legacy_boot': '1'
       },
+      'leez-p710': {
+        'dtb': 'rk3399-leez-p710.dtb',
+        'config': 'leez-rk3399_defconfig'
+      },
     },
   },
   'Samsung': {
