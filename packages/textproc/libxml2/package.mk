@@ -4,10 +4,10 @@
 
 PKG_NAME="libxml2"
 PKG_VERSION="2.12.6"
-PKG_SHA256="69f08b81d4532d285ceea4cdb017eb2d948cb87c34c1d64248a92be90e84132d"
+PKG_SHA256="889c593a881a3db5fdd96cc9318c87df34eb648edfc458272ad46fd607353fbb"
 PKG_LICENSE="MIT"
 PKG_SITE="http://xmlsoft.org"
-PKG_URL="https://gitlab.gnome.org/GNOME/${PKG_NAME}/-/archive/v${PKG_VERSION}/${PKG_NAME}-v${PKG_VERSION}.tar.bz2"
+PKG_URL="https://download.gnome.org/sources/${PKG_NAME}/2.12/${PKG_NAME}-${PKG_VERSION}.tar.xz"
 PKG_DEPENDS_HOST="zlib:host ninja:host Python3:host"
 PKG_DEPENDS_TARGET="toolchain zlib"
 PKG_LONGDESC="The libxml package contains an XML library, which allows you to manipulate XML files."
