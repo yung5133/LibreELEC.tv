@@ -12,7 +12,6 @@ PKG_NEED_UNPACK="${LINUX_DEPENDS}"
 PKG_LONGDESC="WireGuard VPN userspace tools"
 PKG_TOOLCHAIN="manual"
 PKG_IS_KERNEL_PKG="yes"
-lib
 pre_make_target() {
   unset LDFLAGS
 }
