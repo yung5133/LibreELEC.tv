@@ -1,0 +1,278 @@
+name: yml-uses-make-image-LE12-2
+on:
+  workflow_call:
+    inputs:
+      clean_le:
+        # This setting is only used when builds are NOT ephemeral
+        description: "Should the workflow clean the /build-root"
+        default: no_clean_le
+        required: true
+        type: string
+      debug:
+        description: "Provide debug output from GHA run"
+        default: no_debug
+        required: true
+        type: string
+      ephemeral:
+        description: "Target and build-root are ephemeral"
+        default: ephemeral
+        required: true
+        type: string
+      upload:
+        description: "Upload the images to the release server"
+        default: upload
+        required: true
+        type: string
+      buildcmd:
+        description: "build command to run"
+        default: "make image"
+        required: true
+        type: string
+      gitref:
+        description: "git branch or hash to build"
+        default: libreelec-12.2
+        required: true
+        type: string
+      group:
+        description: "concurrency group"
+        default: RK3399_aarch64-12_2
+        required: true
+        type: string
+      project:
+        description: "target project"
+        default: Rockchip
+        required: true
+        type: string
+      arch:
+        description: "target arch"
+        default: aarch64
+        required: true
+        type: string
+      device:
+        description: "target device"
+        default: "RK3399"
+        required: false
+        type: string
+      uboot:
+        description: "target uboot"
+        default: "leez-p710"
+        required: false
+        type: string
+      targetbuilddir:
+        description: "TARGETBUILDDIR"
+        default: "build.LibreELEC-RK3399.aarch64-12.2-devel"
+        required: true
+        type: string
+      buildperiodic:
+        description: "BUILD_PERIODIC"
+        default: nightly
+        required: true
+        type: string
+      ccachecachesize:
+        description: "CCACHE_CACHE_SIZE"
+        default: 10G
+        required: true
+        type: string
+      version:
+        description: "version code used in TARGETBUILDDIR"
+        default: "12.2"
+        required: false
+        type: string
+      file_extension:
+        description: "file extensions to copy to webserver"
+        default: img.gz,tar
+        required: true
+        type: string
+
+env:
+  BASEDIR: ~/leez
+  # Distro Target Variables
+  PROJECT: ${{ inputs.project }}
+  ARCH: ${{ inputs.arch }}
+  DEVICE: ${{ inputs.device }}
+  UBOOT_SYSTEM: ${{ inputs.uboot }}
+  TARGETBUILDDIR: ${{ inputs.targetbuilddir }}
+  BUILD_PERIODIC: ${{ inputs.buildperiodic }}
+  LE_DISTRO_VERSION: ${{ inputs.version }}
+
+concurrency:
+  group: ${{ inputs.group }}
+  cancel-in-progress: false
+
+jobs:
+  build_image:
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 720
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.gitref }}
+          fetch-depth: 2
+          repository: "${{ github.repository_owner }}/LibreELEC.tv"
+          path: "LibreELEC.tv"
+
+      - name: Customise the checked out git repository
+        run: |
+          cd LibreELEC.tv
+          mkdir -p ~/leez/{build-root,sources,target}
+          sed -i -e "s/RUN adduser/RUN adduser --uid $(id -u)/" tools/docker/jammy/Dockerfile
+          sed -i -e 's/^CCACHE_CACHE_SIZE=.*/CCACHE_CACHE_SIZE="${{ inputs.ccachecachesize }}"/' config/options
+          sed -i -e 's/USE_REUSABLE="no"/USE_REUSABLE="yes"/' distributions/LibreELEC/options
+
+      - name: Build official release
+        if: inputs.buildperiodic == 'official'
+        run: |
+          cd LibreELEC.tv
+          sed -i -e 's/LIBREELEC_VERSION="devel"/LIBREELEC_VERSION="${{ inputs.gitref }}"/' distributions/LibreELEC/version
+          echo "OFFICIAL=\"yes\"" >> distributions/LibreELEC/version
+          echo "building official ${{ inputs.gitref }}"
+          if [ "${{ inputs.project }}" = "RPi" ]; then echo "NOOBS=\"noobs\"" >> $GITHUB_ENV; fi
+
+      - name: Create docker image for build - tools/docker/jammy
+        run: |
+          cd LibreELEC.tv
+          docker build --pull -t gh-${{ github.run_id }} tools/docker/jammy
+
+      - name: Cache sources (downloaded tarballs)
+        uses: actions/cache@v5
+        id: cache-sources
+        with:
+          path: LibreELEC.tv/sources
+          # 缓存 key 应包含足够区分不同构建的变量
+          key: sources-Rockchip-RK3399-aarch64-leez-p710
+          restore-keys: |
+            sources-Rockchip-RK3399-aarch64-leez-
+            sources-Rockchip-RK3399-aarch6-
+            sources-Rockchip-RK3399-
+            sources-
+
+
+      - name: Prepare the LibreELEC.tv directory - do not leave files behind
+        if: inputs.ephemeral == 'ephemeral'
+        run: |
+          cd LibreELEC.tv
+          # set the build_dir=/build
+          echo "build_dir=/build" >> $GITHUB_ENV
+          echo "CCACHE_DISABLE=1" >> $GITHUB_ENV
+
+      - name: Prepare the LibreELEC.tv directory - use /build-root and /target
+        if: inputs.ephemeral == 'no_ephemeral'
+        run: |
+          cd LibreELEC.tv
+          # create links that will be used from within the docker containers
+          [ ! -h target ] && ln -s /target .
+          # set the build_dir=/build-root - for NON ephemeral builds
+          echo "build_dir=/build-root" >> $GITHUB_ENV
+
+      - name: Display environment
+        if: inputs.debug == 'debug'
+        run: |
+          cd LibreELEC.tv
+          echo "pwd: $(pwd)"
+          echo "id: $(id)"
+          echo "whoami: $(whoami)"
+          echo "docker images: $(docker images)"
+          echo ""
+          echo "inputs.clean_le: ${{ inputs.clean_le }}"
+          echo "inputs.debug: ${{ inputs.debug }}"
+          echo "inputs.ephemeral: ${{ inputs.ephemeral }}"
+          echo "inputs.upload: ${{ inputs.upload }}"
+
+      - name: Clean target_build_dir in /build-root - make clean DEVICE
+        if: inputs.clean_le == 'clean_le'
+        run: |
+          rm -rf ${{ env.BASEDIR }}/build-root/${{ env.TARGETBUILDDIR }}/.stamps
+          rm -rf ${{ env.BASEDIR }}/build-root/${{ env.TARGETBUILDDIR }}/*
+
+      - name: Build LE in docker container
+        run: |
+          cd LibreELEC.tv
+          docker run --rm -v ${{ env.BASEDIR }}/target:/target \
+                          -v ${{ env.BASEDIR }}/build-root:/build-root \
+                          -v `pwd`:/build \
+                          -v source:/build/source \
+                          -w /build -i \
+                          -e PROJECT=${{ env.PROJECT }} \
+                          -e ARCH=${{ env.ARCH }} \
+                          -e DEVICE=${{ env.DEVICE }} \
+                          -e UBOOT_SYSTEM=${{ env.UBOOT_SYSTEM }} \
+                          -e ONELOG=no -e LOGCOMBINE=fail \
+                          -e BUILD_DIR=${{ env.build_dir }} \
+                          -e BUILD_PERIODIC=${{ env.BUILD_PERIODIC }} \
+                          -e CCACHE_DISABLE=${{ env.CCACHE_DISABLE }} \
+                          gh-${{ github.run_id }} ${{ inputs.buildcmd }} ${{ env.NOOBS }}
+        continue-on-error: true
+
+      - name: Save Cache (sources & ccache)
+        if: always()
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            LibreELEC.tv/sources
+          key: sources-Rockchip-RK3399-aarch64-leez-p710
+  
+      - name: Prepare artifacts - ephemeral
+        if: inputs.ephemeral == 'ephemeral'
+        run: |
+          cd LibreELEC.tv
+          mkdir -p ${{ env.TARGETBUILDDIR }}/artifact
+          grep ^FAIL ${{ env.TARGETBUILDDIR }}/.threads/joblog | \
+            awk '{ print $5, $12 }' | tr ':' '_' | \
+              while read failedpkg failedlog; do
+                mv $(echo ${failedlog} | sed 's#/build/##') \
+                  ${{ env.TARGETBUILDDIR }}/artifact/${{ env.TARGETBUILDDIR }}-${failedpkg}-$(echo ${failedlog} | sed 's#.*/##')
+              done
+
+      - name: Prepare artifacts - no_ephemeral
+        if: inputs.ephemeral == 'no_ephemeral'
+        run: |
+          cd LibreELEC.tv
+          mkdir -p ${{ env.BASEDIR }}/build-root/${{ env.TARGETBUILDDIR }}/artifact
+          grep ^FAIL ${{ env.BASEDIR }}/build-root/${{ env.TARGETBUILDDIR }}/.threads/joblog | \
+            awk '{ print $5, $12 }' | tr ':' '_' | \
+              while read failedpkg failedlog; do
+                mv ${{ env.BASEDIR }}/${failedlog} \
+                  ${{ env.BASEDIR }}/build-root/${{ env.TARGETBUILDDIR }}/artifact/${{ env.TARGETBUILDDIR }}-${failedpkg}-$(echo ${failedlog} | sed 's#.*/##')
+              done
+
+      - name: Upload failed artifacts - ephemeral
+        if: inputs.ephemeral == 'ephemeral'
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ inputs.group }}-failed
+          path: LibreELEC.tv/${{ env.TARGETBUILDDIR }}/artifact/
+          if-no-files-found: ignore
+
+      - name: Upload failed artifacts - no_ephemeral
+        if: inputs.ephemeral == 'no_ephemeral'
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ inputs.group }}-failed
+          path: ${{ env.BASEDIR }}/build-root/${{ env.TARGETBUILDDIR }}/artifact/
+          if-no-files-found: ignore
+
+      - name: Clean up - remove docker image tag
+        run: |
+          cd LibreELEC.tv
+          docker image rm -f gh-${{ github.run_id }}
+
+      - name: List files in target
+        run: |
+          cd LibreELEC.tv
+          ls -lah target/
+
+      - name: Upload files to Release
+        uses: ophub/upload-to-releases@main
+        with:
+          tag: "leez-le12.2"
+          repo: "${{ github.repository_owner }}/LibreELEC.tv"
+          artifacts:  LibreELEC.tv/target/*
+          allow_updates: true
+          remove_artifacts: false
+          replaces_artifacts: true
+          make_latest: true
+          gh_token: ${{ secrets.GITHUB_TOKEN }}
+          body: |
+            - Build LibreELEC for Leez-P710
